@@ -43,24 +43,36 @@ struct rockchip_vpu_codec_ops;
 /**
  * struct rockchip_vpu_variant - information about VPU hardware variant
  *
- * @enc_offset:			Offset from VPU base to encoder registers.
- * @enc_fmts:			Encoder formats.
- * @num_enc_fmts:		Number of encoder formats.
- * @codec:			Supported codecs
- * @codec_ops:			Codec ops.
- * @init:			Initialize hardware.
- * @vepu_irq:			encoder interrupt handler
- * @clocks:			array of clock names
- * @num_clocks:			number of clocks in the array
+ * @enc_offset:   Offset from VPU base to encoder registers.
+ * @enc_fmts:     Encoder formats.
+ * @num_enc_fmts: Number of encoder formats.
+ * @dec_offset:   Offset from VPU base to decoder registers.
+ * @dec_fmts:     Decoder formats.
+ * @num_dec_fmts: Number of decoder formats.
+ * @codec:        Supported codecs
+ * @codec_ops:    Codec ops.
+ * @init:         Initialize hardware.
+ * @vepu_irq:     encoder interrupt handler
+ * @vdpu_irq:     decoder interrupt handler
+ * @clocks:       array of clock names
+ * @num_clocks:   number of clocks in the array
  */
 struct rockchip_vpu_variant {
 	unsigned int enc_offset;
 	const struct rockchip_vpu_fmt *enc_fmts;
 	unsigned int num_enc_fmts;
+
+	unsigned int dec_offset;
+	const struct rockchip_vpu_fmt *dec_fmts;
+	unsigned int num_dec_fmts;
+
 	unsigned int codec;
 	const struct rockchip_vpu_codec_ops *codec_ops;
 	int (*init)(struct rockchip_vpu_dev *vpu);
+
 	irqreturn_t (*vepu_irq)(int irq, void *priv);
+	irqreturn_t (*vdpu_irq)(int irq, void *priv);
+
 	const char *clk_names[ROCKCHIP_VPU_MAX_CLOCKS];
 	int num_clocks;
 };
@@ -118,6 +130,7 @@ struct rockchip_vpu_dev {
 	struct v4l2_m2m_dev *m2m_dev;
 	struct media_device mdev;
 	struct video_device *vfd_enc;
+	struct video_device *vfd_dec;
 	struct platform_device *pdev;
 	struct device *dev;
 	struct clk_bulk_data clocks[ROCKCHIP_VPU_MAX_CLOCKS];
@@ -292,5 +305,30 @@ static inline u32 vepu_read(struct rockchip_vpu_dev *vpu, u32 reg)
 	vpu_debug(6, "MARK: get reg[%03d]: %08x\n", reg / 4, val);
 	return val;
 }
+
+static inline void vdpu_write_relaxed(
+	struct rockchip_vpu_dev *vpu,
+	u32 val, u32 reg)
+{
+	vpu_debug(6, "MARK: Decoder - set reg[%03d]: %08x\n", reg / 4, val);
+	writel_relaxed(val, vpu->dec_base + reg);
+}
+
+static inline void vdpu_write(
+	struct rockchip_vpu_dev *vpu,
+	u32 val, u32 reg)
+{
+	vpu_debug(6, "MARK: Decoder - set reg[%03d]: %08x\n", reg / 4, val);
+	writel(val, vpu->dec_base + reg);
+}
+
+static inline void vdpu_read(struct rockchip_vpu_dev *vpu, u32 reg)
+{
+	u32 val = readl(vpu->dec_base + reg);
+
+	vpu_debug(6, "MARK: Decoder - get reg[%03d]: %08x\n", reg / 4, val);
+	writel_relaxed(val, vpu->dec_base + reg);
+}
+
 
 #endif /* ROCKCHIP_VPU_H_ */

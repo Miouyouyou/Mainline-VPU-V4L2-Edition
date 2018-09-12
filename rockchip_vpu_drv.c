@@ -10,6 +10,10 @@
  * Copyright (C) 2011 Samsung Electronics Co., Ltd.
  */
 
+#ifdef DUMBY_THE_EDITOR
+#include <generated/autoconf.h>
+#endif
+
 #include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -381,7 +385,9 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 	vpu->base = devm_ioremap_resource(vpu->dev, res);
 	if (IS_ERR(vpu->base))
 		return PTR_ERR(vpu->base);
+
 	vpu->enc_base = vpu->base + vpu->variant->enc_offset;
+	vpu->dec_base = vpu->base + vpu->variant->dec_offset;
 
 	ret = dma_set_coherent_mask(vpu->dev, DMA_BIT_MASK(32));
 	if (ret) {
@@ -402,6 +408,23 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 				       0, dev_name(vpu->dev), vpu);
 		if (ret) {
 			dev_err(vpu->dev, "Could not request vepu IRQ.\n");
+			return ret;
+		}
+	}
+
+	if (vpu->variant->vdpu_irq) {
+		int irq;
+
+		irq = platform_get_irq_byname(vpu->pdev, "vdpu");
+		if (irq <= 0) {
+			dev_err(vpu->dev, "Could not get vdpu IRQ.\n");
+			return -ENXIO;
+		}
+
+		ret = devm_request_irq(vpu->dev, irq, vpu->variant->vdpu_irq,
+			0, dev_name(vpu->dev), vpu);
+		if (ret) {
+			dev_err(vpu->dev, "Could not request vdpu IRQ.\n");
 			return ret;
 		}
 	}

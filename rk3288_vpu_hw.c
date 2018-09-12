@@ -62,6 +62,9 @@ static const struct rockchip_vpu_fmt rk3288_vpu_enc_fmts[] = {
 	},
 };
 
+static const struct rockchip_vpu_fmt rk3288_vpu_dec_fmts[] = {
+};
+
 static irqreturn_t rk3288_vepu_irq(int irq, void *dev_id)
 {
 	struct rockchip_vpu_dev *vpu = dev_id;
@@ -79,8 +82,19 @@ static irqreturn_t rk3288_vepu_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static irqreturn_t rk3288_vdpu_irq(int irq, void *dev_id)
+{
+	struct rockchip_vpu_dev *vpu = dev_id;
+	printk(KERN_INFO "Handled IRQ %d", irq);
+
+	vdpu_write(vpu, 0, VDPU_REG_INTERRUPT);
+	return IRQ_HANDLED;
+}
+
 static int rk3288_vpu_hw_init(struct rockchip_vpu_dev *vpu)
 {
+	/* TODO : ??? The clocks are prepared after setting the
+	 * rate ? Shouldn't we do this before ? */
 	/* Bump ACLK to max. possible freq. to improve performance. */
 	clk_set_rate(vpu->clocks[0].clk, RK3288_ACLK_MAX_FREQ);
 	return 0;
@@ -114,9 +128,13 @@ const struct rockchip_vpu_variant rk3288_vpu_variant = {
 	.enc_offset = 0x0,
 	.enc_fmts = rk3288_vpu_enc_fmts,
 	.num_enc_fmts = ARRAY_SIZE(rk3288_vpu_enc_fmts),
+	.dec_offset = 0x400,
+	.dec_fmts = rk3288_vpu_dec_fmts,
+	.num_dec_fmts = ARRAY_SIZE(rk3288_vpu_dec_fmts),
 	.codec_ops = rk3288_vpu_codec_ops,
 	.codec = RK_VPU_CODEC_JPEG,
 	.vepu_irq = rk3288_vepu_irq,
+	.vdpu_irq = rk3288_vdpu_irq,
 	.init = rk3288_vpu_hw_init,
 	.clk_names = {"aclk", "hclk"},
 	.num_clocks = 2

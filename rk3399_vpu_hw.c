@@ -62,6 +62,8 @@ static const struct rockchip_vpu_fmt rk3399_vpu_enc_fmts[] = {
 	},
 };
 
+static const struct rockchip_vpu_fmt rk3399_vpu_dec_fmts[] = {};
+
 static irqreturn_t rk3399_vepu_irq(int irq, void *dev_id)
 {
 	struct rockchip_vpu_dev *vpu = dev_id;
@@ -76,6 +78,16 @@ static irqreturn_t rk3399_vepu_irq(int irq, void *dev_id)
 		status & VEPU_REG_INTERRUPT_FRAME_READY ?
 		VB2_BUF_STATE_DONE :
 		VB2_BUF_STATE_ERROR);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t rk3399_vdpu_irq(int irq, void *dev_id)
+{
+	struct rockchip_vpu_dev *vpu = dev_id;
+
+	vdpu_write(vpu, 0, VDPU_REG_INTERRUPT);
+	vdpu_write(vpu, 0, VDPU_REG_AXI_CTRL);
+
 	return IRQ_HANDLED;
 }
 
@@ -114,9 +126,13 @@ const struct rockchip_vpu_variant rk3399_vpu_variant = {
 	.enc_offset = 0x0,
 	.enc_fmts = rk3399_vpu_enc_fmts,
 	.num_enc_fmts = ARRAY_SIZE(rk3399_vpu_enc_fmts),
+	.dec_offset = 0x0, // TODO : Bogus offset. Find the right one.
+	.dec_fmts = rk3399_vpu_dec_fmts,
+	.num_dec_fmts = ARRAY_SIZE(rk3399_vpu_dec_fmts),
 	.codec = RK_VPU_CODEC_JPEG,
 	.codec_ops = rk3399_vpu_codec_ops,
 	.vepu_irq = rk3399_vepu_irq,
+	.vdpu_irq = rk3399_vdpu_irq,
 	.init = rk3399_vpu_hw_init,
 	.clk_names = {"aclk", "hclk"},
 	.num_clocks = 2
