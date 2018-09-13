@@ -306,13 +306,25 @@ static const struct of_device_id of_rockchip_vpu_match[] = {
 };
 MODULE_DEVICE_TABLE(of, of_rockchip_vpu_match);
 
+/* TODO It seems that we'll need to allocate another V4L2 device and
+ * set it up for decoding purposes.
+ */
 static int rockchip_vpu_video_device_register(struct rockchip_vpu_dev *vpu)
 {
 	const struct of_device_id *match;
 	struct video_device *vfd;
 	int ret;
 
+	/* Match the node AGAIN ? */
 	match = of_match_node(of_rockchip_vpu_match, vpu->dev->of_node);
+
+	if (!match) {
+		dev_err(vpu->dev,
+			"... I don't know how matching the node twice "
+			"failed only the second time...");
+		return -ENODEV;
+	}
+
 	vfd = video_device_alloc();
 	if (!vfd) {
 		v4l2_err(&vpu->v4l2_dev, "Failed to allocate video device\n");
@@ -364,16 +376,28 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 	if (!vpu)
 		return -ENOMEM;
 
+	/* Set up the dev/pdev pointers in the main structure */
 	vpu->dev = &pdev->dev;
 	vpu->pdev = pdev;
+
+	/* Init a mutex and spinlock */
 	mutex_init(&vpu->vpu_mutex);
 	spin_lock_init(&vpu->irqlock);
 
+	/* Try to match rockchip,rk3399-vpu or rockchip,rk3288-vpu */
 	match = of_match_node(of_rockchip_vpu_match, pdev->dev.of_node);
+	if (!match) {
+		dev_err(&pdev->dev, "This is not the node your are looking for");
+		return -ENODEV;
+	}
+
+	/* Use the "variant" data associated with the current match */
 	vpu->variant = match->data;
 
+	/* Init a watchdog */
 	INIT_DELAYED_WORK(&vpu->watchdog_work, rockchip_vpu_watchdog);
 
+	/* Initialize the clocks */
 	for (i = 0; i < vpu->variant->num_clocks; i++)
 		vpu->clocks[i].id = vpu->variant->clk_names[i];
 	ret = devm_clk_bulk_get(&pdev->dev, vpu->variant->num_clocks,
@@ -381,20 +405,25 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	/* Get the MMIO Virtual Address */
 	res = platform_get_resource(vpu->pdev, IORESOURCE_MEM, 0);
 	vpu->base = devm_ioremap_resource(vpu->dev, res);
 	if (IS_ERR(vpu->base))
 		return PTR_ERR(vpu->base);
 
+	/* Infer the encoder and decoder registers address from
+	 * that Virtual Address */
 	vpu->enc_base = vpu->base + vpu->variant->enc_offset;
 	vpu->dec_base = vpu->base + vpu->variant->dec_offset;
 
+	/* Set up the device for DMA transfers */
 	ret = dma_set_coherent_mask(vpu->dev, DMA_BIT_MASK(32));
 	if (ret) {
 		dev_err(vpu->dev, "Could not set DMA coherent mask.\n");
 		return ret;
 	}
 
+	/* Setup the encoders and decoders IRQ, if needed */
 	if (vpu->variant->vepu_irq) {
 		int irq;
 
@@ -429,22 +458,26 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 		}
 	}
 
+	/* Let the rk3xxx_init function take care of specificities */
 	ret = vpu->variant->init(vpu);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to init VPU hardware\n");
 		return ret;
 	}
 
+	/* Set up the Power Management Auto Suspend (??) */
 	pm_runtime_set_autosuspend_delay(vpu->dev, 100);
 	pm_runtime_use_autosuspend(vpu->dev);
 	pm_runtime_enable(vpu->dev);
 
+	/* Prepare the clocks */
 	ret = clk_bulk_prepare(vpu->variant->num_clocks, vpu->clocks);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to prepare clocks\n");
 		return ret;
 	}
 
+	/* Register the V4L2 device */
 	ret = v4l2_device_register(&pdev->dev, &vpu->v4l2_dev);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to register v4l2 device\n");
@@ -452,6 +485,7 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 	}
 	platform_set_drvdata(pdev, vpu);
 
+	/* Initialize V4L2 M2M operations */
 	vpu->m2m_dev = v4l2_m2m_init(&vpu_m2m_ops);
 	if (IS_ERR(vpu->m2m_dev)) {
 		v4l2_err(&vpu->v4l2_dev, "Failed to init mem2mem device\n");
@@ -459,6 +493,7 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 		goto err_v4l2_unreg;
 	}
 
+	/* ??? */
 	vpu->mdev.dev = vpu->dev;
 	strlcpy(vpu->mdev.model, DRIVER_NAME, sizeof(vpu->mdev.model));
 	media_device_init(&vpu->mdev);
