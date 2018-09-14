@@ -1,0 +1,4 @@
+* The IOCTL operations should be different on decoding and encoding.
+* The factorization of the register function for both modes might not
+  be that useful in the end...
+
