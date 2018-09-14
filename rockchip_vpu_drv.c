@@ -70,7 +70,7 @@ static void rockchip_vpu_job_finish(struct rockchip_vpu_dev *vpu,
 	v4l2_m2m_buf_done(src, result);
 	v4l2_m2m_buf_done(dst, result);
 
-	v4l2_m2m_job_finish(vpu->m2m_dev, ctx->fh.m2m_ctx);
+	v4l2_m2m_job_finish(vpu->m2m_enc_dev, ctx->fh.m2m_ctx);
 
 	pm_runtime_mark_last_busy(vpu->dev);
 	pm_runtime_put_autosuspend(vpu->dev);
@@ -81,7 +81,7 @@ void rockchip_vpu_irq_done(struct rockchip_vpu_dev *vpu,
 			   enum vb2_buffer_state result)
 {
 	struct rockchip_vpu_ctx *ctx =
-		(struct rockchip_vpu_ctx *)v4l2_m2m_get_curr_priv(vpu->m2m_dev);
+		(struct rockchip_vpu_ctx *)v4l2_m2m_get_curr_priv(vpu->m2m_enc_dev);
 
 	/* Atomic watchdog cancel. The worker may still be
 	 * running after calling this.
@@ -98,7 +98,7 @@ void rockchip_vpu_watchdog(struct work_struct *work)
 
 	vpu = container_of(to_delayed_work(work),
 			   struct rockchip_vpu_dev, watchdog_work);
-	ctx = (struct rockchip_vpu_ctx *)v4l2_m2m_get_curr_priv(vpu->m2m_dev);
+	ctx = (struct rockchip_vpu_ctx *)v4l2_m2m_get_curr_priv(vpu->m2m_enc_dev);
 	if (ctx) {
 		vpu_err("frame processing timed out!\n");
 		ctx->codec_ops->reset(ctx);
@@ -238,7 +238,7 @@ static int rockchip_vpu_open(struct file *filp)
 
 	ctx->dev = vpu;
 	if (vdev == vpu->vfd_enc)
-		ctx->fh.m2m_ctx = v4l2_m2m_ctx_init(vpu->m2m_dev, ctx,
+		ctx->fh.m2m_ctx = v4l2_m2m_ctx_init(vpu->m2m_enc_dev, ctx,
 						    &enc_queue_init);
 	else
 		ctx->fh.m2m_ctx = ERR_PTR(-ENODEV);
@@ -306,10 +306,20 @@ static const struct of_device_id of_rockchip_vpu_match[] = {
 };
 MODULE_DEVICE_TABLE(of, of_rockchip_vpu_match);
 
-/* TODO It seems that we'll need to allocate another V4L2 device and
- * set it up for decoding purposes.
- */
-static int rockchip_vpu_video_device_register(struct rockchip_vpu_dev *vpu)
+static const struct video_device rockchip_vfd_common_props = {
+	.device_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_M2M_MPLANE,
+	.fops        = &rockchip_vpu_fops,
+	.ioctl_ops   = &rockchip_vpu_enc_ioctl_ops,
+	.release     = video_device_release,
+	.vfl_dir     = VFL_DIR_M2M,
+};
+
+static int rockchip_vpu_video_register_device(
+	struct rockchip_vpu_dev* __restrict const vpu,
+	struct video_device** __restrict const dst,
+	struct v4l2_m2m_dev* __restrict const m2m_dev,
+	int const media_controller_function,
+	char const *  __restrict const name_suffix)
 {
 	const struct of_device_id *match;
 	struct video_device *vfd;
@@ -320,8 +330,8 @@ static int rockchip_vpu_video_device_register(struct rockchip_vpu_dev *vpu)
 
 	if (!match) {
 		dev_err(vpu->dev,
-			"... I don't know how matching the node twice "
-			"failed only the second time...");
+			"... I don't know how matching the same node "
+			"twice failed only the second time...");
 		return -ENODEV;
 	}
 
@@ -331,16 +341,15 @@ static int rockchip_vpu_video_device_register(struct rockchip_vpu_dev *vpu)
 		return -ENOMEM;
 	}
 
-	vfd->fops = &rockchip_vpu_fops;
-	vfd->release = video_device_release;
+	*vfd = rockchip_vfd_common_props;
+	/* Using the same Mutex and SpinLock, since I think that
+	 * Rockchip VPU can only do one operation at a time, be it
+	 * encoding or decoding.
+	 */
 	vfd->lock = &vpu->vpu_mutex;
 	vfd->v4l2_dev = &vpu->v4l2_dev;
-	vfd->vfl_dir = VFL_DIR_M2M;
-	vfd->device_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_M2M_MPLANE;
-	vfd->ioctl_ops = &rockchip_vpu_enc_ioctl_ops;
-	snprintf(vfd->name, sizeof(vfd->name), "%s-enc", match->compatible);
-	vpu->vfd_enc = vfd;
-	video_set_drvdata(vfd, vpu);
+	snprintf(vfd->name, sizeof(vfd->name), "%s-%s",
+		match->compatible, name_suffix);
 
 	ret = video_register_device(vfd, VFL_TYPE_GRABBER, 0);
 	if (ret) {
@@ -349,13 +358,16 @@ static int rockchip_vpu_video_device_register(struct rockchip_vpu_dev *vpu)
 	}
 	v4l2_info(&vpu->v4l2_dev, "registered as /dev/video%d\n", vfd->num);
 
-	ret = v4l2_m2m_register_media_controller(vpu->m2m_dev,
-				vfd,
-				MEDIA_ENT_F_PROC_VIDEO_ENCODER);
+	ret = v4l2_m2m_register_media_controller(m2m_dev,
+				vfd, media_controller_function);
+
 	if (ret) {
 		v4l2_err(&vpu->v4l2_dev, "Failed to init mem2mem media controller\n");
 		goto err_unreg_video;
 	}
+
+	*dst = vfd;
+	video_set_drvdata(vfd, vpu);
 	return 0;
 
 err_unreg_video:
@@ -363,6 +375,24 @@ err_unreg_video:
 err_free_dev:
 	video_device_release(vfd);
 	return ret;
+}
+
+static int rockchip_vpu_video_register_encoder_device(
+	struct rockchip_vpu_dev *vpu)
+{
+	return rockchip_vpu_video_register_device(
+		vpu, &vpu->vfd_enc,
+		vpu->m2m_enc_dev, MEDIA_ENT_F_PROC_VIDEO_ENCODER,
+		"enc");
+}
+
+static int rockchip_vpu_video_register_decoder_device(
+	struct rockchip_vpu_dev *vpu)
+{
+	return rockchip_vpu_video_register_device(
+		vpu, &vpu->vfd_dec,
+		vpu->m2m_dec_dev, MEDIA_ENT_F_PROC_VIDEO_DECODER,
+		"dec");
 }
 
 static int rockchip_vpu_probe(struct platform_device *pdev)
@@ -486,11 +516,18 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, vpu);
 
 	/* Initialize V4L2 M2M operations */
-	vpu->m2m_dev = v4l2_m2m_init(&vpu_m2m_ops);
-	if (IS_ERR(vpu->m2m_dev)) {
-		v4l2_err(&vpu->v4l2_dev, "Failed to init mem2mem device\n");
-		ret = PTR_ERR(vpu->m2m_dev);
+	vpu->m2m_enc_dev = v4l2_m2m_init(&vpu_m2m_ops);
+	if (IS_ERR(vpu->m2m_enc_dev)) {
+		v4l2_err(&vpu->v4l2_dev, "Failed to init encoder mem2mem device\n");
+		ret = PTR_ERR(vpu->m2m_enc_dev);
 		goto err_v4l2_unreg;
+	}
+
+	vpu->m2m_dec_dev = v4l2_m2m_init(&vpu_m2m_ops);
+	if (IS_ERR(vpu->m2m_dec_dev)) {
+		v4l2_err(&vpu->v4l2_dev, "Failed to init decoder mem2mem device\n");
+		ret = PTR_ERR(vpu->m2m_dec_dev);
+		goto err_m2m_enc_dev_rel;
 	}
 
 	/* ??? */
@@ -499,25 +536,39 @@ static int rockchip_vpu_probe(struct platform_device *pdev)
 	media_device_init(&vpu->mdev);
 	vpu->v4l2_dev.mdev = &vpu->mdev;
 
-	ret = rockchip_vpu_video_device_register(vpu);
+	ret = rockchip_vpu_video_register_encoder_device(vpu);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to register encoder\n");
-		goto err_m2m_rel;
+		goto err_m2m_dec_dev_rel;
+	}
+
+	ret = rockchip_vpu_video_register_decoder_device(vpu);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to register encoder\n");
+		goto err_video_encoder_dev_unreg;
 	}
 
 	ret = media_device_register(&vpu->mdev);
 	if (ret) {
 		v4l2_err(&vpu->v4l2_dev, "Failed to register mem2mem media device\n");
-		goto err_video_dev_unreg;
+		goto err_video_decoder_dev_unreg;
 	}
 	return 0;
-err_video_dev_unreg:
+
+err_video_decoder_dev_unreg:
+	if (vpu->vfd_enc) {
+		video_unregister_device(vpu->vfd_dec);
+		video_device_release(vpu->vfd_dec);
+	}
+err_video_encoder_dev_unreg:
 	if (vpu->vfd_enc) {
 		video_unregister_device(vpu->vfd_enc);
 		video_device_release(vpu->vfd_enc);
 	}
-err_m2m_rel:
-	v4l2_m2m_release(vpu->m2m_dev);
+err_m2m_dec_dev_rel:
+	v4l2_m2m_release(vpu->m2m_dec_dev);
+err_m2m_enc_dev_rel:
+	v4l2_m2m_release(vpu->m2m_enc_dev);
 err_v4l2_unreg:
 	v4l2_device_unregister(&vpu->v4l2_dev);
 err_clk_unprepare:
@@ -533,8 +584,8 @@ static int rockchip_vpu_remove(struct platform_device *pdev)
 	v4l2_info(&vpu->v4l2_dev, "Removing %s\n", pdev->name);
 
 	media_device_unregister(&vpu->mdev);
-	v4l2_m2m_unregister_media_controller(vpu->m2m_dev);
-	v4l2_m2m_release(vpu->m2m_dev);
+	v4l2_m2m_unregister_media_controller(vpu->m2m_enc_dev);
+	v4l2_m2m_release(vpu->m2m_enc_dev);
 	media_device_cleanup(&vpu->mdev);
 	if (vpu->vfd_enc) {
 		video_unregister_device(vpu->vfd_enc);

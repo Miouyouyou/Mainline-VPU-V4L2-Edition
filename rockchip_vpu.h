@@ -112,6 +112,8 @@ enum rockchip_vpu_plane {
 /**
  * struct rockchip_vpu_dev - driver data
  * @v4l2_dev:		V4L2 device to register video devices for.
+ * @m2m_enc_dev: M2M Encoder device. Used with M2M functions.
+ * @m2m_dev_dev: M2M Decoder device. Used with M2M functions.
  * @vfd_enc:		Video device for encoder.
  * @pdev:		Pointer to VPU platform device.
  * @dev:		Pointer to device for convenient logging using
@@ -127,7 +129,8 @@ enum rockchip_vpu_plane {
  */
 struct rockchip_vpu_dev {
 	struct v4l2_device v4l2_dev;
-	struct v4l2_m2m_dev *m2m_dev;
+	struct v4l2_m2m_dev *m2m_enc_dev;
+	struct v4l2_m2m_dev *m2m_dec_dev;
 	struct media_device mdev;
 	struct video_device *vfd_enc;
 	struct video_device *vfd_dec;
