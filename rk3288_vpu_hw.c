@@ -63,6 +63,36 @@ static const struct rockchip_vpu_fmt rk3288_vpu_enc_fmts[] = {
 };
 
 static const struct rockchip_vpu_fmt rk3288_vpu_dec_fmts[] = {
+	{
+		.name = "One slice of an H264 Encoded Stream (RK3288)",
+		.fourcc = V4L2_PIX_FMT_H264,
+		.codec_mode = RK_VPU_MODE_H264_DEC,
+		.num_planes = 1,
+		/* FIXME Provide the actual VPU sizes limits for H264 */
+		.frmsize = { 
+			.min_width = 96,
+			.max_width = 4096,
+			.step_width = MB_DIM,
+			.min_height = 32,
+			.max_height = 4096,
+			.step_height = MB_DIM,
+		},
+	},
+	{
+		.name = "One frame of a VP8 Encoded Stream (RK3288)",
+		.fourcc = V4L2_PIX_FMT_VP8,
+		.codec_mode = RK_VPU_MODE_VP8_DEC,
+		.num_planes = 1,
+		/* FIXME Provide the actual VPU sizes limits for VP8 */
+		.frmsize = {
+			.min_width = 96,
+			.max_width = 4096,
+			.step_width = MB_DIM,
+			.min_height = 32,
+			.max_height = 4096,
+			.step_height = MB_DIM,
+		},
+	},
 };
 
 static irqreturn_t rk3288_vepu_irq(int irq, void *dev_id)

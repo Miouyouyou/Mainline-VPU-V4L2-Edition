@@ -79,12 +79,16 @@ struct rockchip_vpu_variant {
 
 /**
  * enum rockchip_vpu_codec_mode - codec operating mode.
- * @RK_VPU_MODE_NONE:  No operating mode. Used for RAW video formats.
- * @RK_VPU_MODE_JPEG_ENC: JPEG encoder.
+ * @RK_VPU_MODE_NONE:      No operating mode. Used for RAW video formats.
+ * @RK_VPU_MODE_JPEG_ENC:  JPEG encoder.
+ * @RK_VPU_MODE_H264_DEC:  H264 decoder.
+ * @RK_VPU_MODE_VP8_DEC:   VP8 decoder.
  */
 enum rockchip_vpu_codec_mode {
 	RK_VPU_MODE_NONE = -1,
 	RK_VPU_MODE_JPEG_ENC,
+	RK_VPU_MODE_H264_DEC,
+	RK_VPU_MODE_VP8_DEC
 };
 
 struct rockchip_vpu_ctrl {

@@ -21,6 +21,9 @@
 extern const struct v4l2_ioctl_ops rockchip_vpu_enc_ioctl_ops;
 extern const struct vb2_ops rockchip_vpu_enc_queue_ops;
 
+extern const struct v4l2_ioctl_ops rockchip_vpu_dec_ioctl_ops;
+//extern const struct vb2_ops rockchip_vpu_dec_queue_ops;
+
 void *rockchip_vpu_find_control_data(struct rockchip_vpu_ctx *ctx,
 				unsigned int id);
 void rockchip_vpu_enc_reset_src_fmt(struct rockchip_vpu_dev *vpu,
