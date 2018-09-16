@@ -385,4 +385,168 @@ const struct v4l2_ioctl_ops rockchip_vpu_dec_ioctl_ops = {
 	.vidioc_streamoff = v4l2_m2m_ioctl_streamoff,
 };
 
+/* TODO Taken from Tomasz Figa code.
+ * Understand clearly what it does.
+ * The original code used the old V4L2 API and it seems
+ * that Ezequiel Garcia's JPEG encoder code and Mediatek
+ * H264 decoder code do things differently, notably when
+ * it comes to managing the number of planes.
+ */
+static int rockchip_vpu_queue_setup(struct vb2_queue *vq,
+				  unsigned int *num_buffers,
+				  unsigned int *num_planes,
+				  unsigned int sizes[],
+				  struct device *alloc_devs[])
+{
+	struct rockchip_vpu_ctx *ctx = fh_to_ctx(vq->drv_priv);
 
+	switch (vq->type) {
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+		*num_planes = ctx->vpu_src_fmt->num_planes;
+
+		if (*num_buffers < 1)
+			*num_buffers = 1;
+
+		if (*num_buffers > VIDEO_MAX_FRAME)
+			*num_buffers = VIDEO_MAX_FRAME;
+
+		sizes[0] = ctx->src_fmt.plane_fmt[0].sizeimage;
+		vpu_debug(0, "output sizes[%d]: %d\n", 0, sizes[0]);
+		break;
+
+	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+		*num_planes = ctx->vpu_dst_fmt->num_planes;
+
+		if (*num_buffers < 1)
+			*num_buffers = 1;
+
+		if (*num_buffers > VIDEO_MAX_FRAME)
+			*num_buffers = VIDEO_MAX_FRAME;
+
+		sizes[0] = round_up(ctx->dst_fmt.plane_fmt[0].sizeimage, 8);
+
+		if (ctx->vpu_src_fmt->fourcc == V4L2_PIX_FMT_H264)
+			/* Add space for appended motion vectors. */
+			sizes[0] += 64 * MB_WIDTH(ctx->dst_fmt.width)
+					* MB_HEIGHT(ctx->dst_fmt.height);
+
+		vpu_debug(0, "capture sizes[%d]: %d\n", 0, sizes[0]);
+		break;
+
+	default:
+		vpu_err("invalid queue type: %d\n", vq->type);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int rockchip_vpu_buf_prepare(struct vb2_buffer *vb)
+{
+	struct vb2_queue *vq = vb->vb2_queue;
+	struct rockchip_vpu_ctx *ctx = fh_to_ctx(vq->drv_priv);
+	int i;
+
+	switch (vq->type) {
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+		vpu_debug(4, "plane size: %ld, dst size: %d\n",
+				vb2_plane_size(vb, 0),
+				ctx->src_fmt.plane_fmt[0].sizeimage);
+
+		if (vb2_plane_size(vb, 0)
+		    < ctx->src_fmt.plane_fmt[0].sizeimage) {
+			vpu_err("plane size is too small for output\n");
+			return -EINVAL;
+		}
+		break;
+
+	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+		/* Originally used ++i instead of i++, but that seems like an old
+		 * C++ habit to avoid overloaded operators, which do not exist in
+		 * C
+		 */
+		for (i = 0; i < ctx->vpu_dst_fmt->num_planes; i++) {
+			vpu_debug(4, "plane %d size: %ld, sizeimage: %u\n", i,
+					vb2_plane_size(vb, i),
+					ctx->dst_fmt.plane_fmt[i].sizeimage);
+
+			if (vb2_plane_size(vb, i)
+			    < ctx->dst_fmt.plane_fmt[i].sizeimage) {
+				vpu_err("size of plane %d is too small for capture\n",
+					i);
+				break;
+			}
+		}
+
+		if (i != ctx->vpu_dst_fmt->num_planes)
+			return -EINVAL;
+		break;
+
+	default:
+		vpu_err("invalid queue type: %d\n", vq->type);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static void rockchip_vpu_buf_queue(struct vb2_buffer *vb)
+{
+	struct rockchip_vpu_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
+	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
+
+	v4l2_m2m_buf_queue(ctx->fh.m2m_ctx, vbuf);
+}
+
+static int rockchip_vpu_start_streaming(
+	struct vb2_queue *q,
+	unsigned int count)
+{
+	struct rockchip_vpu_ctx *ctx = vb2_get_drv_priv(q);
+	enum rockchip_vpu_codec_mode codec_mode;
+
+	/* TODO Does this make any sense for H264 ? */
+	if (V4L2_TYPE_IS_OUTPUT(q->type))
+		ctx->sequence_out = 0;
+	else
+		ctx->sequence_cap = 0;
+
+	/* Set codec_ops for the chosen destination format */
+	codec_mode = ctx->vpu_dst_fmt->codec_mode;
+
+	vpu_debug(4, "Codec mode = %d\n", codec_mode);
+	ctx->codec_ops = &ctx->dev->variant->codec_ops[codec_mode];
+	return 0;
+}
+
+static void rockchip_vpu_stop_streaming(
+	struct vb2_queue *q)
+{
+	struct rockchip_vpu_ctx *ctx = vb2_get_drv_priv(q);
+
+	/* The mem2mem framework calls v4l2_m2m_cancel_job before
+	 * .stop_streaming, so there isn't any job running and
+	 * it is safe to return all the buffers.
+	 */
+	for (;;) {
+		struct vb2_v4l2_buffer *vbuf;
+
+		if (V4L2_TYPE_IS_OUTPUT(q->type))
+			vbuf = v4l2_m2m_src_buf_remove(ctx->fh.m2m_ctx);
+		else
+			vbuf = v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
+		if (!vbuf)
+			break;
+		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
+	}
+}
+
+const struct vb2_ops rockchip_vpu_dec_queue_ops = {
+	.queue_setup = rockchip_vpu_queue_setup,
+	.buf_prepare = rockchip_vpu_buf_prepare,
+	.buf_queue = rockchip_vpu_buf_queue,
+	.start_streaming = rockchip_vpu_start_streaming,
+	.stop_streaming = rockchip_vpu_stop_streaming,
+	.wait_prepare = vb2_ops_wait_prepare,
+	.wait_finish = vb2_ops_wait_finish,
+};

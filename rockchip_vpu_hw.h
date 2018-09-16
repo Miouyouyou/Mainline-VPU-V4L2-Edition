@@ -62,4 +62,10 @@ void rockchip_vpu_irq_done(struct rockchip_vpu_dev *vpu,
 void rk3288_vpu_jpeg_enc_run(struct rockchip_vpu_ctx *ctx);
 void rk3399_vpu_jpeg_enc_run(struct rockchip_vpu_ctx *ctx);
 
+void rk3288_vpu_h264_dec_run(struct rockchip_vpu_ctx *ctx);
+void rk3399_vpu_h264_dec_run(struct rockchip_vpu_ctx *ctx);
+
+void rk3288_vpu_vp8_dec_run(struct rockchip_vpu_ctx *ctx);
+void rk3399_vpu_vp8_dec_run(struct rockchip_vpu_ctx *ctx);
+
 #endif /* ROCKCHIP_VPU_HW_H_ */

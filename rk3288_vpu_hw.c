@@ -139,14 +139,33 @@ static void rk3288_vpu_enc_reset(struct rockchip_vpu_ctx *ctx)
 	vepu_write(vpu, 0, VEPU_REG_AXI_CTRL);
 }
 
+static void rk3288_vpu_dec_reset(struct rockchip_vpu_ctx *ctx)
+{
+	struct rockchip_vpu_dev *vpu = ctx->dev;
+
+	vdpu_write(vpu, VDPU_REG_INTERRUPT_DEC_IRQ_DIS, VDPU_REG_INTERRUPT);
+}
+
+/* FIXME Implement the VP8 decoder. */
+void rk3288_vpu_vp8_dec_run(struct rockchip_vpu_ctx *ctx)
+{
+}
+
 /*
  * Supported codec ops.
  */
-
 static const struct rockchip_vpu_codec_ops rk3288_vpu_codec_ops[] = {
 	[RK_VPU_MODE_JPEG_ENC] = {
 		.run = rk3288_vpu_jpeg_enc_run,
 		.reset = rk3288_vpu_enc_reset,
+	},
+	[RK_VPU_MODE_H264_DEC] = {
+		.run = rk3288_vpu_h264_dec_run,
+		.reset = rk3288_vpu_dec_reset,
+	},
+	[RK_VPU_MODE_VP8_DEC] = {
+		.run = rk3288_vpu_vp8_dec_run,
+		.reset = rk3288_vpu_dec_reset,
 	},
 };
 
